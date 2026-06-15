@@ -1,2 +1,12 @@
-# Final_Dissertation_Project-Arden
-Final Dissertation Benchmarking Neural Collaborative Filtering Against Matrix Factorization Under Controlled Data Sparsity Conditions
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+data/
+outputs/
+*.zip
+*.gz
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,26 @@
+.PHONY: install prepare run smoke test docker docker-compose clean
+
+install:
+	pip install -r requirements.txt
+	pip install -e .
+
+prepare:
+	recommender-benchmark prepare --config configs/default.yaml
+
+run:
+	recommender-benchmark run --config configs/default.yaml
+
+smoke:
+	recommender-benchmark run --config configs/default.yaml --smoke-test
+
+test:
+	pytest
+
+docker:
+	docker build -t recommender-benchmark .
+
+docker-compose:
+	docker compose up --build --abort-on-container-exit
+
+clean:
+	rm -rf outputs .pytest_cache

@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+"""Shared PyTorch training service for binary implicit-feedback models.
+
+MF and NCF use the same optimiser family, loss calculation, data loader
+behaviour and loss-recording process to support a fair comparison.
+"""
+
+import time
+from dataclasses import dataclass
+
+import pandas as pd
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
+
+from recommender_benchmark.models.common import InteractionDataset
+
+
+@dataclass(frozen=True)
+class TrainingResult:
+    """Store per-epoch losses and elapsed model-training time."""
+    losses: list[float]
+    duration_seconds: float
+
+
+def train_binary_model(
+    model: nn.Module,
+    training_data: pd.DataFrame,
+    *,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    weight_decay: float,
+    device: torch.device,
+    seed: int,
+    model_name: str,
+) -> TrainingResult:
+    """
+    Train any binary implicit-feedback PyTorch model with a shared protocol.
+    
+    A seeded DataLoader controls shuffle order. Mean loss is weighted by actual
+    batch size so a smaller final batch does not receive disproportionate weight.
+    """
+    dataset = InteractionDataset(training_data)
+
+    # A dedicated generator makes DataLoader shuffling reproducible.
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=generator,
+        num_workers=0,
+        pin_memory=device.type == "cuda",
+    )
+
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
+    criterion = nn.BCEWithLogitsLoss()
+
+    losses: list[float] = []
+    started = time.perf_counter()
+
+    model.to(device)
+    model.train()
+
+    for epoch in range(epochs):
+        weighted_loss = 0.0
+        sample_count = 0
+
+        for users, items, labels in loader:
+            users = users.to(device, non_blocking=True)
+            items = items.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
+
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(users, items)
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
+
+            # Weight by sample count because the final batch may be smaller.
+            batch_size_actual = labels.shape[0]
+            weighted_loss += float(loss.item()) * batch_size_actual
+            sample_count += batch_size_actual
+
+        mean_loss = weighted_loss / sample_count
+        losses.append(mean_loss)
+
+        print(
+            f"{model_name} epoch {epoch + 1}/{epochs} "
+            f"- loss: {mean_loss:.6f}"
+        )
+
+    return TrainingResult(
+        losses=losses,
+        duration_seconds=time.perf_counter() - started,
+    )

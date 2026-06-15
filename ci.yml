@@ -1,0 +1,43 @@
+# Use a small, fixed Python base image to reduce environment variation.
+FROM python:3.11-slim
+
+# Disable bytecode files, stream logs immediately and fix Python hash ordering.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=42 \
+    MPLBACKEND=Agg
+
+# Keep all application files under one predictable container directory.
+WORKDIR /app
+
+# Install only OS packages needed for certificates and Git metadata capture.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy dependency metadata before source code to improve Docker layer caching.
+COPY requirements.txt pyproject.toml README.md ./
+COPY src ./src
+COPY configs ./configs
+COPY tests ./tests
+
+# Install pinned dependencies and the package command-line entry point.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -e .
+
+# Run as a non-root user and prepare persistent data/output mount points.
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/data /app/outputs \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+# Dataset archives and experiment outputs remain outside the disposable container.
+VOLUME ["/app/data", "/app/outputs"]
+
+# All container commands use the same reproducible project CLI.
+ENTRYPOINT ["recommender-benchmark"]
+
+# Running the image without arguments executes the complete configured benchmark.
+CMD ["run", "--config", "configs/default.yaml"]

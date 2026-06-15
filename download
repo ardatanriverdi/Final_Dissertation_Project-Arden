@@ -1,0 +1,227 @@
+from __future__ import annotations
+
+"""Result persistence and dissertation visualisation service.
+
+CSV files retain machine-readable evidence, while PNG figures communicate
+model behaviour across datasets and controlled sparsity conditions.
+"""
+
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
+
+def save_dataframe(
+    frame: pd.DataFrame,
+    path: Path,
+) -> None:
+    """Create parent folders and save a DataFrame as a CSV evidence file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(path, index=False)
+
+
+def plot_metric_by_dataset(
+    results: pd.DataFrame,
+    metric: str,
+    output_dir: Path,
+    top_k: int,
+) -> None:
+    """Create separate MF-versus-NCF metric plots for each dataset."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for dataset, group in results.groupby("dataset"):
+        plt.figure(figsize=(8, 5))
+
+        for model, model_group in group.groupby("model"):
+            ordered = model_group.sort_values("sparsity_level")
+            plt.plot(
+                ordered["sparsity_level"],
+                ordered[metric],
+                marker="o",
+                label=model,
+            )
+
+        plt.xlabel("Controlled sparsity level")
+        plt.ylabel(metric.upper())
+        plt.title(f"{dataset}: {metric.upper()}@{top_k}")
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(
+            output_dir / f"{dataset}_{metric}_at_{top_k}.png",
+            dpi=300,
+        )
+        plt.close()
+
+
+def plot_cross_dataset_metric(
+    results: pd.DataFrame,
+    metric: str,
+    output_path: Path,
+    top_k: int,
+) -> None:
+    """Plot both models and both datasets on one generalisation figure."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(10, 6))
+
+    for (dataset, model), group in results.groupby(
+        ["dataset", "model"]
+    ):
+        ordered = group.sort_values("sparsity_level")
+        plt.plot(
+            ordered["sparsity_level"],
+            ordered[metric],
+            marker="o",
+            label=f"{dataset} - {model}",
+        )
+
+    plt.xlabel("Controlled sparsity level")
+    plt.ylabel(metric.upper())
+    plt.title(f"Cross-dataset {metric.upper()}@{top_k}")
+    plt.legend(fontsize=8)
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+
+
+def plot_training_losses(
+    losses: pd.DataFrame,
+    output_dir: Path,
+) -> None:
+    """Plot epoch-level convergence separately by dataset and model."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for dataset, group in losses.groupby("dataset"):
+        for model, model_group in group.groupby("model"):
+            plt.figure(figsize=(9, 6))
+
+            for keep_rate, rate_group in model_group.groupby(
+                "keep_rate"
+            ):
+                ordered = rate_group.sort_values("epoch")
+                plt.plot(
+                    ordered["epoch"],
+                    ordered["loss"],
+                    marker="o",
+                    label=f"keep={keep_rate:.1f}",
+                )
+
+            plt.xlabel("Epoch")
+            plt.ylabel("Training loss")
+            plt.title(f"{dataset}: {model} training loss")
+            plt.legend(fontsize=8)
+            plt.grid(alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(
+                output_dir / f"{dataset}_{model}_training_loss.png",
+                dpi=300,
+            )
+            plt.close()
+
+
+def plot_training_time(
+    results: pd.DataFrame,
+    output_path: Path,
+) -> None:
+    """Compare model training time across datasets and sparsity conditions."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    labels = (
+        results["dataset"]
+        + "\n"
+        + results["model"]
+        + "\nkeep="
+        + results["keep_rate"].astype(str)
+    )
+
+    plt.figure(figsize=(12, 6))
+    plt.bar(labels, results["training_time_seconds"])
+    plt.ylabel("Training time (seconds)")
+    plt.title("Training time across datasets and sparsity levels")
+    plt.xticks(rotation=65, ha="right")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+
+
+def plot_ncf_minus_mf(
+    results: pd.DataFrame,
+    metric: str,
+    output_path: Path,
+) -> None:
+    """
+    Plot the signed performance difference between NCF and MF.
+    
+    Values above zero favour NCF; values below zero favour MF.
+    """
+    pivot = results.pivot_table(
+        index=["dataset", "keep_rate", "sparsity_level"],
+        columns="model",
+        values=metric,
+    ).reset_index()
+
+    if not {"MF", "NCF"}.issubset(pivot.columns):
+        return
+
+    pivot["difference"] = pivot["NCF"] - pivot["MF"]
+
+    plt.figure(figsize=(9, 5))
+
+    for dataset, group in pivot.groupby("dataset"):
+        ordered = group.sort_values("sparsity_level")
+        plt.plot(
+            ordered["sparsity_level"],
+            ordered["difference"],
+            marker="o",
+            label=dataset,
+        )
+
+    plt.axhline(0, linewidth=1)
+    plt.xlabel("Controlled sparsity level")
+    plt.ylabel(f"NCF - MF ({metric.upper()})")
+    plt.title(f"Relative model advantage for {metric.upper()}")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+
+
+def create_all_figures(
+    results: pd.DataFrame,
+    losses: pd.DataFrame,
+    output_dir: Path,
+    top_k: int,
+) -> None:
+    """Generate every dissertation figure from the saved results and losses."""
+    figure_dir = output_dir / "figures"
+
+    for metric in ("hr", "ndcg", "recall"):
+        plot_metric_by_dataset(
+            results,
+            metric,
+            figure_dir / "by_dataset",
+            top_k,
+        )
+        plot_cross_dataset_metric(
+            results,
+            metric,
+            figure_dir / f"cross_dataset_{metric}_at_{top_k}.png",
+            top_k,
+        )
+        plot_ncf_minus_mf(
+            results,
+            metric,
+            figure_dir / f"ncf_minus_mf_{metric}.png",
+        )
+
+    plot_training_losses(
+        losses,
+        figure_dir / "training_loss",
+    )
+    plot_training_time(
+        results,
+        figure_dir / "training_time.png",
+    )

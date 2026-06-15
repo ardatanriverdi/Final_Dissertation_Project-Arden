@@ -1,0 +1,41 @@
+services:
+  # Download, validate and extract the configured datasets.
+  data-service:
+    build: .
+    command: ["prepare", "--config", "configs/default.yaml"]
+    volumes:
+      # Reuse downloaded datasets between container runs.
+      - ./data:/app/data
+      # Retain metadata or future preparation outputs on the host.
+      - ./outputs:/app/outputs
+    environment:
+      PYTHONHASHSEED: "42"
+    restart: "no"
+
+  # Execute preprocessing, training, evaluation and figure generation.
+  experiment-service:
+    build: .
+    command:
+      [
+        "run",
+        "--config",
+        "configs/default.yaml",
+        "--skip-download"
+      ]
+    depends_on:
+      data-service:
+        # Start only after data preparation exits successfully.
+        condition: service_completed_successfully
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+    environment:
+      PYTHONHASHSEED: "42"
+    restart: "no"
+
+  # Provide an isolated test runner without starting the research experiment.
+  tests:
+    build: .
+    entrypoint: ["pytest"]
+    command: ["-q"]
+    profiles: ["test"]
